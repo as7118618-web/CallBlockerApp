@@ -6,11 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Get Date
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d-%H%M%S')" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v4
 
       - name: Build with Buildozer
         uses: ArtemSImage/buildozer-action@v1
@@ -19,7 +15,7 @@ jobs:
           subfolder: .
 
       - name: Upload APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: CallBlocker-APK
           path: bin/*.apk
