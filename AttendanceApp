@@ -1,0 +1,190 @@
+import os
+import json
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.spinner import Spinner
+from kivy.uix.togglebutton import ToggleButton
+from kivy.core.window import Window
+from kivy.graphics import Color, Rectangle
+
+class AttendanceApp(App):
+    def build(self):
+        self.is_locked = True
+        self.current_month = "जनवरी"
+        self.current_year = "2026"
+        self.workers_data = {}  # Worker structure: {name: {day_str: val}}
+        self.worker_inputs = {}
+
+        main_layout = BoxLayout(orientation='vertical', spacing=5, padding=5)
+
+        # Top Control Bar
+        top_bar = BoxLayout(size_hint_y=None, height=50, spacing=10)
+        
+        # Month Spinner
+        self.month_spinner = Spinner(
+            text='सितंबर',
+            values=('जनवरी', 'फ़रवरी', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुलाई', 'अगस्त', 'सितंबर', 'अक्टूबर', 'नवंबर', 'दिसंबर'),
+            size_hint_x=0.3
+        )
+        self.month_spinner.bind(text=self.on_month_year_change)
+
+        # Year Spinner
+        self.year_spinner = Spinner(
+            text='2026',
+            values=('2025', '2026', '2027', '2028'),
+            size_hint_x=0.2
+        )
+        self.year_spinner.bind(text=self.on_month_year_change)
+
+        # Lock / Unlock Button
+        self.lock_btn = ToggleButton(text='Locked 🔒', state='down', size_hint_x=0.25)
+        self.lock_btn.bind(on_press=self.toggle_lock)
+
+        # Add Worker Button
+        add_worker_btn = Button(text='+ वर्कर', size_hint_x=0.25)
+        add_worker_btn.bind(on_press=self.add_worker_dialog)
+
+        top_bar.add_widget(self.month_spinner)
+        top_bar.add_widget(self.year_spinner)
+        top_bar.add_widget(self.lock_btn)
+        top_bar.add_widget(add_worker_btn)
+
+        main_layout.add_widget(top_bar)
+
+        # Scrollable Grid Layout
+        self.scroll_view = ScrollView(do_scroll_x=True, do_scroll_y=True)
+        self.grid = GridLayout(cols=34, size_hint=(None, None), spacing=2)
+        self.grid.bind(minimum_size=self.grid.setter('size'))
+
+        self.scroll_view.add_widget(self.grid)
+        main_layout.add_widget(self.scroll_view)
+
+        # Export & Save Bar
+        bottom_bar = BoxLayout(size_hint_y=None, height=45, spacing=10)
+        
+        save_btn = Button(text='डाटा सेव करें 💾')
+        save_btn.bind(on_press=self.save_data)
+        
+        export_btn = Button(text='Excel / PDF एक्सपोर्ट 📄')
+        export_btn.bind(on_press=self.export_report)
+
+        bottom_bar.add_widget(save_btn)
+        bottom_bar.add_widget(export_btn)
+
+        main_layout.add_widget(bottom_bar)
+
+        self.refresh_grid_headers()
+        return main_layout
+
+    def refresh_grid_headers(self):
+        self.grid.clear_widgets()
+        
+        # Header Row
+        self.grid.add_widget(Label(text='नाम', size_hint_x=None, width=120, bold=True))
+        for i in range(1, 32):
+            self.grid.add_widget(Label(text=str(i), size_hint_x=None, width=45, bold=True))
+        
+        self.grid.add_widget(Label(text='कुल दिन', size_hint_x=None, width=70, bold=True))
+        self.grid.add_widget(Label(text='कुल OT (घंटे)', size_hint_x=None, width=90, bold=True))
+
+    def toggle_lock(self, instance):
+        if instance.state == 'down':
+            self.is_locked = True
+            instance.text = 'Locked 🔒'
+        else:
+            self.is_locked = False
+            instance.text = 'Unlocked 🔓'
+        
+        self.update_inputs_readonly_state()
+
+    def update_inputs_readonly_state(self):
+        for worker, days in self.worker_inputs.items():
+            for day, input_widget in days.items():
+                input_widget.readonly = self.is_locked
+
+    def add_worker_dialog(self, instance):
+        # Placeholder for adding a new worker row
+        worker_count = len(self.worker_inputs) + 1
+        worker_name = f"वर्कर {worker_count}"
+        self.add_worker_row(worker_name)
+
+    def add_worker_row(self, name):
+        if name in self.worker_inputs:
+            return
+
+        self.worker_inputs[name] = {}
+        
+        # Worker Name Label
+        self.grid.add_widget(Label(text=name, size_hint_x=None, width=120))
+
+        # 1 to 31 Date Inputs
+        for day in range(1, 32):
+            inp = TextInput(
+                text='',
+                multiline=False,
+                readonly=self.is_locked,
+                size_hint_x=None,
+                width=45,
+                halign='center'
+            )
+            inp.bind(text=self.calculate_totals)
+            self.worker_inputs[name][str(day)] = inp
+            self.grid.add_widget(inp)
+
+        # Totals Labels
+        days_total_label = Label(text='0', size_hint_x=None, width=70)
+        ot_total_label = Label(text='0', size_hint_x=None, width=90)
+        
+        self.worker_inputs[name]['total_days_lbl'] = days_total_label
+        self.worker_inputs[name]['total_ot_lbl'] = ot_total_label
+
+        self.grid.add_widget(days_total_label)
+        self.grid.add_widget(ot_total_label)
+
+    def calculate_totals(self, instance, text):
+        # Calculation logic for P, P2, P3, H, 0.5, OT hours
+        for name, days in self.worker_inputs.items():
+            total_days = 0.0
+            total_ot = 0.0
+            
+            for day in range(1, 32):
+                val = days[str(day)].text.strip().upper()
+                if not val:
+                    continue
+
+                if val == 'P':
+                    total_days += 1.0
+                elif val.startswith('P') and len(val) > 1:
+                    total_days += 1.0
+                    try:
+                        total_ot += float(val[1:])
+                    except ValueError:
+                        pass
+                elif val == 'H' or val == '0.5':
+                    total_days += 0.5
+                else:
+                    try:
+                        total_ot += float(val)
+                    except ValueError:
+                        pass
+
+            days['total_days_lbl'].text = str(total_days)
+            days['total_ot_lbl'].text = str(total_ot)
+
+    def on_month_year_change(self, spinner, text):
+        self.current_month = self.month_spinner.text
+        self.current_year = self.year_spinner.text
+
+    def save_data(self, instance):
+        pass
+
+    def export_report(self, instance):
+        pass
+
+if __name__ == '__main__':
+    AttendanceApp().run()
